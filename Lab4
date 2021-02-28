@@ -1,0 +1,222 @@
+; Archvo:	Lab3 
+; Dispositivo:	PIC16F887
+; Autor:	Daniel González 
+; Carnet:	171506
+; Compilador:	pic-as (v2.30), MPLABX v5.40
+;    
+; Programa:	Interrupciones y PullUps
+; Hardware:	Display en puerto C y D
+;
+; Creado: feb, 2021
+; Ultima modificación: 27 feb, 2021
+;-------------------------------------------------------------------------------
+PROCESSOR 16F887
+#include <xc.inc>
+
+; configuración word1
+ CONFIG FOSC=INTRC_NOCLKOUT //Oscilador interno sin salidas
+ CONFIG WDTE=OFF	    //WDT disabled (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON	    //PWRT enabled (espera de 72ms al iniciar
+ CONFIG MCLRE=OFF	    //pin MCLR se utiliza como I/O
+ CONFIG CP=OFF		    //sin protección de código
+ CONFIG CPD=OFF		    //sin protección de datos
+ 
+ CONFIG BOREN=OFF	    //sin reinicio cuando el voltaje baja de 4v
+ CONFIG IESO=OFF	    //Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF	    //Cambio de reloj externo a interno en caso de falla
+ CONFIG LVP=ON		    //Programación en bajo voltaje permitida
+ 
+;configuración word2
+ 
+  CONFIG WRT=OFF	    //Protección de autoescritura 
+  CONFIG BOR4V=BOR40V	    //Reinicio abajo de 4V 
+ UP	EQU 0		    ;Pines para los buttones 
+ DOWN	EQU 7
+	
+reiniciar_Tmr0 macro	;Es una función para utilizar en el código DIFERENTE DE UNA ETIQUETA
+    banksel TMR0	;Asignarle un valor para el TIMER0
+    movlw   217		;cALCULO VALOR DE TIMER
+    movwf   TMR0	
+    bcf	    T0IF	;Es la limpieza de la bandera 
+    endm		;Finalizamos el macro
+    
+  PSECT udata_bank0	;common memory
+    cont:	DS  2	;Se hace una variable 2 byte apartado para hacer más grande el espacio o variable
+    Display2:	DS  1	;Se hace una variable 1 Byte
+    
+  PSECT udata_shr	;common memory
+    w_temp:	DS  1	;Para guardar un valor en 1 byte apartado siendo temporal
+    STATUS_TEMP:DS  1	;Para guardar un valor en 1 byte apartado siendo temporal
+  
+  PSECT resVect, class=CODE, abs, delta=2
+  ;----------------------vector reset------------------------
+  
+  ORG 00h		;posición 000h para el reset
+  resetVec:
+    PAGESEL main
+    goto main
+    
+  PSECT intVect, class=CODE, abs, delta=2
+  
+;-----------------------------interripción reset--------------------------------
+  
+  ORG 04h		;posición 0004h para interr
+  VALMov:							    
+    movf    w_temp	;Aseguras el valor actual de W
+    swapf   STATUS, W	;Se utiliza para cambiar el valor del estatus y asignarlo a W
+    movwf   STATUS_TEMP	;Es ara guardar valor de Estatus invertido a la variable temporal del estatus
+  
+  Bande:
+    btfsc   T0IF	;Se verifica el estado de la bandera del TMR0
+    call    Interr_Tmr0	;Si la bandera esta levantada se llama a INTER_TMR0
+    btfsc   RBIF	;Se verifica que la bandera de interrupcion este levantada
+    call    int_ioCB	;Verifica que la bandera este levantada y si se llama a INT_IOCB
+  
+  CAMBIO:
+    swapf   STATUS_TEMP, W ;Se invierte el valor del STATUS_TEMP y se asigna a W 
+    movwf   STATUS	;Se le asigna valor de W al ESTATUS
+    swapf   w_temp, F
+    swapf   w_temp, W
+    retfie
+    
+;---------------------------SubrutinasInterrupción------------------------------
+    
+  Interr_Tmr0:
+    reiniciar_Tmr0	;Se utiliza para cambiar la subrutina y reiniciar_tmr a 10 ms
+    incf    cont
+    movf    cont, W
+    sublw   100
+    btfss   STATUS, 2	;Bit zero status
+    goto    return_T0	;$+2
+    clrf    cont	;500ms
+    incf    Display2
+ 
+ return_T0:		;Verifica el estatus de la bandera     
+    return
+    
+ int_ioCB:		;Para loa verifcacion de pulsadores 
+    banksel PORTB	;Selecciona el banco del PORTB 
+    btfss   PORTB, UP	;Este verifica que el boton Incre esta presionado 
+    incf    PORTA	;cUANDO EL Boton esta presionado, si lo esta incrementa
+    btfss   PORTB, DOWN	;Se verifica que el boton este de incremento este presionado 
+    decf    PORTA	;Cuando el boton de decremento esta presionado, decrementa en el PORTA
+    bcf	    RBIF	;Para limpieza de la bandera de incremento 
+    return
+    
+  PSECT code, delta=2, abs
+  ORG 100h		;Posición para el código
+  
+;-------------------------------Tabla-------------------------------------------
+  
+Tabla:			    
+    clrf  PCLATH	    
+    bsf   PCLATH,0	    
+    andlw 0x0F		    
+    addwf PCL		    
+    retlw 00111111B          ; 0
+    retlw 00000110B          ; 1
+    retlw 01011011B          ; 2
+    retlw 01001111B          ; 3
+    retlw 01100110B          ; 4
+    retlw 01101101B          ; 5
+    retlw 01111101B          ; 6
+    retlw 00000111B          ; 7
+    retlw 01111111B          ; 8
+    retlw 01101111B          ; 9
+    retlw 01110111B          ; A
+    retlw 01111100B          ; b
+    retlw 00111001B          ; C
+    retlw 01011110B          ; d
+    retlw 01111001B          ; E
+    retlw 01110001B          ; F
+   
+    ;-----------------------------configuración------------------------------
+  main: 
+
+    call    config_io	    ;Sirve para llamar a la configuracioón de entradas y salidas
+    call    config_reloj    ;Sirve para llamar la configuración del reloj interno	
+    call    config_tmr0	    ;Sirve para hacer la llamada a la conf del TMR0
+    call    config_IOChange ;Sirve para llamar a la configurtación del Config_IOchange
+    call    config_InterrupEnable  ;Sirve para llamar a la configuración de interrupciones 
+    banksel PORTA	    ;Se verifica el banco del PuertA  00
+    
+;----------------------------------loop principal---------------------
+    
+ loop: 
+    movf    Display2,w	    ;Se asigna un valor a Display2 a W
+    call    Tabla	    ;Para llamar a la tabla de valores de la tabla
+    movwf   PORTD	    ;Se cambaia el valor que regresa la tabla al PORTA
+    
+    movf    PORTA,w	    ;Se asigna un valor a Display2 a W
+    call    Tabla	    ;Para llamar a la tabla de valores de la tabla
+    movwf   PORTC	    ;Se cambaia el valor que regresa la tabla al PORTA
+    
+    goto    loop	    ;Repetición de Loop
+    
+;-------------------------------------sub rutinas---------------------
+    
+config_IOChange:
+    banksel TRISA	    ;Nos posicionamos en el banco TRISA 001
+    bsf	    IOCB, UP	    ;Nos sirve para activar el pin 0 del PORTB como Pull-UP
+    bsf	    IOCB, DOWN	    ;Nos sirve para activar el pin 7 del PORTB como Pull-UP
+    
+    banksel PORTA	    ;Nos posiciona en el banco PORTA 00
+    movf    PORTB, W	    ;Se cambia el valor del PORTB a w     
+    bcf	    RBIF	    ;Para limpiar la bandera de la interrupcion PORT 
+    return
+    
+config_io:
+    bsf	    STATUS, 5	    ;En el banco  11
+    bsf	    STATUS, 6	    ;Banksel ANSEL
+    clrf    ANSEL	    ;Activacion de los pines digitales
+    clrf    ANSELH
+    
+    bsf	    STATUS, 5	    ;En el banco 01
+    bcf	    STATUS, 6	    ;Banksel TRISA
+    movlw   0xF0
+    movwf   TRISA	    ;La salida del PORTA 
+    clrf    TRISD	    
+    clrf    TRISC
+    bsf	    TRISB, UP
+    bsf	    TRISB, DOWN
+    
+    bcf	    OPTION_REG,	7   ;RBPU Para habilitar el beat
+    bsf	    WPUB, UP
+    bsf	    WPUB, DOWN
+    
+
+    bcf	    STATUS, 5	    ;En el banco 00
+    bcf	    STATUS, 6	    ;Banksel para el PORTA
+    clrf    PORTA	    ;Valor incial 0 en el PORTA
+    clrf    PORTD
+    clrf    PORTC
+    return
+     
+ config_tmr0:
+    banksel OPTION_REG	    ;Banco de registros asociadas al puerto A
+    bcf	    T0CS	    ;Reloj interno 
+    bcf	    PSA		    ;Prescaler 
+    bsf	    PS2
+    bsf	    PS1
+    bsf	    PS0		    ;PS = 111 Tiempo en ejecutar , 256
+    
+    reiniciar_Tmr0	    ;Este es el Macro necesario para reiniciar TMR0
+    return  
+    
+ config_reloj:
+    banksel OSCCON	    ;Buscan en el banco OSCCON 
+    bsf	    IRCF2	    ;Con OSCCON para la configuración bit2 IRCF
+    bsf	    IRCF1	    ;Con OSCCON para la configuracuón bit1 IRCF
+    bcf	    IRCF0	    ;Con OSCCON para la configuración bit0 IRCF
+    bsf	    SCS		    ;Para el reloj interno de 4Mhz
+    return
+
+config_InterrupEnable:
+    bsf	    GIE		    ;Se activan las interrupciones
+    bsf	    T0IE	    ;Para encuentrar en INTCON
+    bcf	    T0IF	    ;Se limpia la bandera 
+    return
+ 
+end
+
+
